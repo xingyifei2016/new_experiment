@@ -75,7 +75,199 @@ class manifoldReLUv2angle(nn.Module):
         return torch.cat((temp_abs, cos_sin),1)
     
     
+class Cylindrical_Nonlinearity(torch.autograd.Function):
+    """
+    We can implement our own custom autograd Functions by subclassing
+    torch.autograd.Function and implementing the forward and backward passes
+    which operate on Tensors.
+    """
 
+    @staticmethod
+    def forward(ctx, input):
+        """
+        In the forward pass we receive a Tensor containing the input and return
+        a Tensor containing the output. ctx is a context object that can be used
+        to stash information for backward computation. You can cache arbitrary
+        objects for use in the backward pass using the ctx.save_for_backward method.
+        """
+        
+        ctx.save_for_backward(input)
+        
+        temp_cos = input[:,0,...]
+        temp_sin = input[:,1,...]
+        
+        temp_cos[temp_sin <= 0] = 1
+        temp_sin = (temp_sin > 0) * temp_sin
+        cos_sin = torch.cat((temp_cos.unsqueeze(1), temp_sin.unsqueeze(1)), 1)
+        
+        
+        
+        return cos_sin
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        In the backward pass we receive a Tensor containing the gradient of the loss
+        with respect to the output, and we need to compute the gradient of the loss
+        with respect to the input.
+        """
+        input, = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        
+        grad_input_cos = grad_input[:,0,...]
+        grad_input_sin = grad_input[:,1,...]
+        
+        
+        grad_input_cos[input[:, 1, ...] < 0] = 0
+        grad_input_sin[input[:, 1, ...] < 0] = 0
+        
+        
+        return torch.cat((grad_input_cos.unsqueeze(1), grad_input_sin.unsqueeze(1)), 1)
+    
+    
+    
+class tangentRELU(nn.Module):
+    def __init__(self):
+        # Applies tangent reLU to inputs.
+        super(tangentRELU, self).__init__()
+        self.relu = nn.ReLU()
+        self.nl = Cylindrical_Nonlinearity.apply
+        
+    def forward(self, x):
+        #Shape: [batches, features, in_channels, spatial_x, spatial_y]
+        x_shape = x.shape  
+        
+        temp_abs = x[:,0,...]  
+        temp_cos = x[:,1,...]
+        temp_sin = x[:,2,...]
+        
+        # For log-space magnitude is just reLU
+        final_abs = self.relu(temp_abs).unsqueeze(1)
+        
+        # For cylindrical coordinates, if y direction < 0, converts to (1, 0); else remain the same
+        cos_sin = torch.cat((temp_cos.unsqueeze(1), temp_sin.unsqueeze(1)), 1)
+        self.nl(cos_sin)
+        
+        
+        return torch.cat((final_abs, cos_sin),1)    
+class ComplexConvVolume(nn.Module):
+    
+    def __init__(self, in_channels, num_filters, kern_size, stride=(1, 1), num_tied_block=1, padding=0, dilation=1, groups=1):
+        super(ComplexConvVolume, self).__init__()
+        
+        # Convolution parameters
+        self.kern_size = kern_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        
+        if type(kern_size) == int:
+            self.kern_size = (kern_size, kern_size)
+        
+        # Number of tied-block convolution kernels, 1 equals regular convolution.
+        # Each tied-block convolution kernel goes through **in_channels // num_tied_block** channels
+        self.num_blocks = num_tied_block
+        
+        if in_channels % num_tied_block != 0:
+            assert("Number of tied block convolution needs to be multiple of in_channels: "+str(in_channels))
+            
+        if in_channels == 1 and num_tied_block != 1:
+            assert("In channel of size 1 does not support tied-block convolution")
+            
+        self.in_channels = in_channels // num_tied_block
+        
+        # Out channels per blocks
+        self.num_filters = num_filters
+        self.out_channels = num_filters * num_tied_block
+        # Initialize kernels
+        self.mag_kernel = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        
+        self.cos_kernel = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        
+        self.sin_kernel = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        
+        # Consistent with torch's initialization
+        n = self.in_channels
+        for k in self.kern_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        
+        self.mag_kernel.data.uniform_(-stdv, stdv)
+        self.cos_kernel.data.uniform_(-stdv, stdv)
+        self.sin_kernel.data.uniform_(-stdv, stdv)
+    def __repr__(self):
+        return 'ComplexConv('+str(self.in_channels)+', '+str(self.out_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
+        
+    def forward(self, x):
+        # Input is of shape [Batch, 3, channel, height, width]
+        # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
+        
+        # Separate each component and do convolution along each component
+        # The input of each component is [Batch, in_channel, height, width]
+        # The output of each component is [Batch, out_channel, height, width]
+        mag = x[:, 0, ...]
+        cos_phase = x[:, 1, ...]
+        sin_phase = x[:, 2, ...]
+        
+        # DO MAGNITUDE COMPONENT
+        mag_kernel_sqrd = self.mag_kernel ** 2
+        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        mag_list = [F.conv2d(mag[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+                             mag_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups) for i in range(self.num_blocks)]
+        log_output = torch.cat(mag_list, dim=1)
+        
+        # DO COSINE COMPONENT
+        cos_kernel_sqrd = self.cos_kernel ** 2
+        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        # TODO: reshape into batch and not do for loop ####
+        cos_phase_shape = cos_phase.shape
+        cos_phase = cos_phase.reshape((-1, self.in_channels, cos_phase_shape[-2], cos_phase_shape[-1]))
+        cos_output = F.conv2d(cos_phase, \
+                             cos_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups)
+        cos_output = cos_output.reshape(cos_phase.shape[0], self.num_filters*self.num_blocks, cos_output.shape[-2], cos_output.shape[-1])
+#         cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+#                              cos_kernel, None, self.stride, self.padding, self.dilation, \
+#                              self.groups) for i in range(self.num_blocks)]
+#         cos_output = torch.cat(cos_list, dim=1)
+        
+        # DO SINE COMPONENT
+        sin_kernel_sqrd = self.sin_kernel ** 2
+        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        # [Batch, total_channels, H, W] ----> [Batch*L, kernel_channels, H, W]
+        sin_phase_shape = sin_phase.shape
+        sin_phase = sin_phase.reshape((-1, self.in_channels, sin_phase_shape[-2], sin_phase_shape[-1]))
+        sin_output = F.conv2d(sin_phase, \
+                             sin_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups)
+        sin_output = sin_output.reshape(sin_phase.shape[0], self.num_filters*self.num_blocks, sin_output.shape[-2], sin_output.shape[-1])
+        
+#         sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+#                              sin_kernel, None, self.stride, self.padding, self.dilation, \
+#                              self.groups) for i in range(self.num_blocks)]
+#         sin_output = torch.cat(sin_list, dim=1)
+        
+        # Need to normalize directional vectors such that
+        # cos(theta)^2 + sin(theta)^2 = 1
+        # First combine the cosine and sine outputs together
+        # [Batch, 2, out_channel, height, width]
+        cos_sin_output = torch.cat([cos_output.unsqueeze(1), sin_output.unsqueeze(1)], dim=1)
+        
+        # Compute sqrt(cos(theta)^2 + sin(theta)^2) for normalization
+        cos_sin_magnitude = torch.sqrt(torch.sum(cos_sin_output ** 2, dim=1, keepdim=True))
+        cos_sin_output = cos_sin_output / cos_sin_magnitude
+        
+        # Concate all final outputs together
+        final_output = torch.cat([log_output.unsqueeze(1), cos_sin_output], dim=1)
+        
+        return final_output
+    
+    
 class ComplexConv(nn.Module):
     
     def __init__(self, in_channels, num_filters, kern_size, stride=(1, 1), num_tied_block=1, padding=0, dilation=1, groups=1):
@@ -138,7 +330,7 @@ class ComplexConv(nn.Module):
         
         # DO MAGNITUDE COMPONENT
         mag_kernel_sqrd = self.mag_kernel ** 2
-        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
         mag_list = [F.conv2d(mag[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
                              mag_kernel, None, self.stride, self.padding, self.dilation, \
@@ -147,21 +339,36 @@ class ComplexConv(nn.Module):
         
         # DO COSINE COMPONENT
         cos_kernel_sqrd = self.cos_kernel ** 2
-        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
-        cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+        # TODO: reshape into batch and not do for loop ####
+        cos_phase_shape = cos_phase.shape
+        cos_phase = cos_phase.reshape((-1, self.in_channels, cos_phase_shape[-2], cos_phase_shape[-1]))
+        cos_output = F.conv2d(cos_phase, \
                              cos_kernel, None, self.stride, self.padding, self.dilation, \
-                             self.groups) for i in range(self.num_blocks)]
-        cos_output = torch.cat(cos_list, dim=1)
+                             self.groups)
+        cos_output = cos_output.reshape(cos_phase.shape[0], self.num_filters*self.num_blocks, cos_output.shape[-2], cos_output.shape[-1])
+#         cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+#                              cos_kernel, None, self.stride, self.padding, self.dilation, \
+#                              self.groups) for i in range(self.num_blocks)]
+#         cos_output = torch.cat(cos_list, dim=1)
         
         # DO SINE COMPONENT
         sin_kernel_sqrd = self.sin_kernel ** 2
-        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
-        sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+        # [Batch, total_channels, H, W] ----> [Batch*L, kernel_channels, H, W]
+        sin_phase_shape = sin_phase.shape
+        sin_phase = sin_phase.reshape((-1, self.in_channels, sin_phase_shape[-2], sin_phase_shape[-1]))
+        sin_output = F.conv2d(sin_phase, \
                              sin_kernel, None, self.stride, self.padding, self.dilation, \
-                             self.groups) for i in range(self.num_blocks)]
-        sin_output = torch.cat(sin_list, dim=1)
+                             self.groups)
+        sin_output = sin_output.reshape(sin_phase.shape[0], self.num_filters*self.num_blocks, sin_output.shape[-2], sin_output.shape[-1])
+        
+#         sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+#                              sin_kernel, None, self.stride, self.padding, self.dilation, \
+#                              self.groups) for i in range(self.num_blocks)]
+#         sin_output = torch.cat(sin_list, dim=1)
         
         # Need to normalize directional vectors such that
         # cos(theta)^2 + sin(theta)^2 = 1
@@ -282,7 +489,7 @@ class DistanceTransform(nn.Module):
         
         # DO MAGNITUDE COMPONENT
         mag_kernel_sqrd = self.mag_kernel ** 2
-        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
         mag_list = [F.conv2d(mag[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
                              mag_kernel, None, self.stride, self.padding, self.dilation, \
@@ -291,7 +498,7 @@ class DistanceTransform(nn.Module):
         
         # DO COSINE COMPONENT
         cos_kernel_sqrd = self.cos_kernel ** 2
-        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
         cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
                              cos_kernel, None, self.stride, self.padding, self.dilation, \
@@ -300,7 +507,7 @@ class DistanceTransform(nn.Module):
         
         # DO SINE COMPONENT
         sin_kernel_sqrd = self.sin_kernel ** 2
-        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True)
+        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
         sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
                              sin_kernel, None, self.stride, self.padding, self.dilation, \
@@ -338,7 +545,124 @@ class DistanceTransform(nn.Module):
         return torch.sqrt(magnitude_distance + directional_distance)
         
         
+class DifferenceLayer(nn.Module):
+    def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
+        ## Magnitude do log / exp; Phase do weighted 
+        super(DifferenceLayer, self).__init__()
         
+        self.in_channels = in_channels
+        self.kern_size = kern_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        
+        if type(kern_size) == int:
+            self.kern_size = (kern_size, kern_size)
+            
+        # Number of tied-block convolution kernels, 1 equals regular convolution.
+        # Each tied-block convolution kernel goes through **in_channels // num_tied_block** channels
+        self.num_blocks = num_tied_block
+        
+        if in_channels % num_tied_block != 0:
+            assert("Number of tied block convolution needs to be multiple of in_channels: "+str(in_channels))
+            
+        
+        self.b = b # For hyperparameter in distance calculation    
+        
+        self.in_channels = in_channels // num_tied_block
+        
+        # Initialize kernels
+        self.mag_kernel = torch.nn.Parameter(torch.rand((self.in_channels, self.in_channels, \
+                                                         self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        self.cos_kernel = torch.nn.Parameter(torch.rand((self.in_channels, self.in_channels, \
+                                                           self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        self.sin_kernel = torch.nn.Parameter(torch.rand((self.in_channels, self.in_channels, \
+                                                           self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        
+        # Consistent with torch's initialization
+        n = self.in_channels
+        for k in self.kern_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        
+        self.mag_kernel.data.uniform_(-stdv, stdv)
+        self.cos_kernel.data.uniform_(-stdv, stdv)
+        self.sin_kernel.data.uniform_(-stdv, stdv)
+        
+    def __repr__(self):
+        return 'DistanceLayer('+str(self.in_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
+    
+    def forward(self, x):
+        # Input is of shape [Batch, 3, channel, height, width]
+        # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
+        
+        # Separate each component and do convolution along each component
+        # The input of each component is [Batch, in_channel, height, width]
+        # The output of each component is [Batch, in_channel, height, width]
+        # The final output of this layer would be [Batch, in_channel, height, width]
+        mag = x[:, 0, ...]
+        cos_phase = x[:, 1, ...]
+        sin_phase = x[:, 2, ...]
+        
+        # DO MAGNITUDE COMPONENT
+        mag_kernel_sqrd = self.mag_kernel ** 2
+        mag_kernel = mag_kernel_sqrd / torch.sum(torch.sum(torch.sum(mag_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        mag_list = [F.conv2d(mag[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+                             mag_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups) for i in range(self.num_blocks)]
+        log_output = torch.cat(mag_list, dim=1)
+        
+        # DO COSINE COMPONENT
+        cos_kernel_sqrd = self.cos_kernel ** 2
+        cos_kernel = cos_kernel_sqrd / torch.sum(torch.sum(torch.sum(cos_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+                             cos_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups) for i in range(self.num_blocks)]
+        cos_output = torch.cat(cos_list, dim=1)
+        
+        # DO SINE COMPONENT
+        sin_kernel_sqrd = self.sin_kernel ** 2
+        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        
+        sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
+                             sin_kernel, None, self.stride, self.padding, self.dilation, \
+                             self.groups) for i in range(self.num_blocks)]
+        sin_output = torch.cat(sin_list, dim=1)
+        
+        # Need to normalize directional vectors such that
+        # cos(theta)^2 + sin(theta)^2 = 1
+        # First combine the cosine and sine outputs together
+        # [Batch, 2, out_channel, height, width]
+        cos_sin_output = torch.cat([cos_output.unsqueeze(1), sin_output.unsqueeze(1)], dim=1)
+        
+        # Compute sqrt(cos(theta)^2 + sin(theta)^2) for normalization
+        cos_sin_magnitude = torch.sqrt(torch.sum(cos_sin_output ** 2, dim=1, keepdim=True))
+        cos_sin_output = cos_sin_output / cos_sin_magnitude
+        
+        
+        # For center-cropping original input
+        output_xdim = cos_output.shape[2]
+        output_ydim = cos_output.shape[3]
+        input_xdim = x.shape[3]
+        input_ydim = x.shape[4]
+        
+        start_x = int((input_xdim-output_xdim)/2)
+        start_y = int((input_ydim-output_ydim)/2)
+        
+        cropped_input = x[:, :, :, start_x:start_x+output_xdim, start_y:start_y+output_ydim]
+        
+        # Compute distance according to sqrt(log^2[(|z2|+b)/(|z1|+b)] + acos^2(x^T * y))
+        # Need to add noise or else normalization may have zero entries which cause NaN
+        direction_noise = 1e-8
+        directional_distance = cos_sin_output - cropped_input[:, 1:, ...] + direction_noise
+        directional_distance = directional_distance / torch.sqrt(torch.sum(directional_distance ** 2, dim=1, keepdim=True))
+        
+        magnitude_distance = (cropped_input[:, 0, ...] - log_output) ** 2
+        
+        return torch.cat((magnitude_distance.unsqueeze(1), directional_distance), dim=1)        
         
 #         upsampler = nn.Upsample(size=x_shape[-2:], mode='nearest')
         
