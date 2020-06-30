@@ -33,20 +33,12 @@ def m(x):
 eps = 0.000001
 
 def weightNormalize1(weights):
+    # Function used by Rudra's G-transport
     return ((weights**2)/torch.sum(weights**2))
 
 def weightNormalize2(weights):
+    # Function used by Rudra's G-transport
     return weights/torch.sum(weights**2)
-
-def weightNormalize(weights, drop_prob=0.0):
-    out = []
-    for row in weights:
-        if drop_prob==0.0:
-            out.append(row**2/torch.sum(row**2))
-        else:
-            p = torch.randint(0, 2, (row.size())).float().cuda() 
-            out.append((row**2/torch.sum(row**2))*p)
-    return torch.stack(out)
 
 
 class manifoldReLUv2angle(nn.Module):
@@ -244,14 +236,12 @@ class ComplexConv(nn.Module):
 #         cos_output = torch.cat(cos_list, dim=1)
         
         # DO SINE COMPONENT
-        sin_kernel_sqrd = self.sin_kernel ** 2
-        sin_kernel = sin_kernel_sqrd / torch.sum(torch.sum(torch.sum(sin_kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
         
         # [Batch, total_channels, H, W] ----> [Batch*L, kernel_channels, H, W]
         sin_phase_shape = sin_phase.shape
         sin_phase = sin_phase.reshape((-1, self.in_channels, sin_phase_shape[-2], sin_phase_shape[-1]))
         sin_output = F.conv2d(sin_phase, \
-                             sin_kernel, None, self.stride, self.padding, self.dilation, \
+                             kernel, None, self.stride, self.padding, self.dilation, \
                              self.groups)
         sin_output = sin_output.reshape(sin_phase.shape[0], self.num_filters*self.num_blocks, sin_output.shape[-2], sin_output.shape[-1])
         
