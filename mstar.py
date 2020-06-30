@@ -17,7 +17,7 @@ from logger import setup_logger
 from models import new_models as m
 from dataloaders import tenclass as t
 import matplotlib.pyplot as plt
-
+from models import resnet18 as re
 def plot_grad_flow(named_parameters):
     ave_grads = []
     layers = []
@@ -144,7 +144,7 @@ def main():
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 #     batches = [80, 50, 1000, 30, 600] 
     batches = [256]
-    lrs = [0.001, 0.0005]#[0.01, 0.005, 0.05]
+    lrs = [0.001, 0.0005, 0.01, 0.005, 0.05]
 #     models = {'difference+tangent': model_.Dis_Tan, 'tangent only': model_.NL, 'difference': model_.Dis, 'tangent+difference': model_.Tan_Dis, 'previous_architecture': model_.ManifoldNetRes}
     models = {'newModels': m.Model1}
     num_repeat = 2
