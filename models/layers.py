@@ -25,23 +25,24 @@ from matplotlib.colors import hsv_to_rgb
 import torch.nn.functional as f
 import torch.nn.functional as F
 
-def m(x):
+eps = 1e-6
+
+def m(x): #TODO Utkarsh rename this
     # Debugging function
     is_nan = True in torch.isnan(x).cpu().detach().numpy() 
     is_inf = (torch.min(x) == torch.tensor(float("-Inf"))) or (torch.max(x) == torch.tensor(float("Inf")))
     return is_nan or is_inf
-eps = 0.000001
 
-def weightNormalize1(weights):
+def weightNormalize1(weights): #TODO Utkarsh these functions need to be renamed
     # Function used by Rudra's G-transport
-    return ((weights**2)/torch.sum(weights**2))
+    return ((weights**2)/torch.sum(weights**2)) #TODO Utkarsh: Which dimensions? Seems to be adding all dimensions up
 
 def weightNormalize2(weights):
     # Function used by Rudra's G-transport
     return weights/torch.sum(weights**2)
 
 
-class manifoldReLUv2angle(nn.Module):
+class manifoldReLUv2angle(nn.Module): #TODO Utkarsh: look at this
     # Rudra's implementation of G-Transport
     def __init__(self,channels):
         super(manifoldReLUv2angle, self).__init__()
@@ -189,7 +190,7 @@ class ComplexConv(nn.Module):
         self.kernel = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
         
         # Consistent with torch's initialization
-        n = self.in_channels
+        n = self.in_channels #TODO Utkarsh: Seems like we are initializing weights manually. Use nn.init functions?
         for k in self.kern_size:
             n *= k
         stdv = 1. / math.sqrt(n)
@@ -212,23 +213,23 @@ class ComplexConv(nn.Module):
         
         # Normalize kernel
         kernel_sqrd = self.kernel ** 2
-        kernel = kernel_sqrd / torch.sum(torch.sum(torch.sum(kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True)
+        kernel = kernel_sqrd / torch.sum(torch.sum(torch.sum(kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True) #TODO Utkarsh: do dim=(1,2,3)?
         
         # DO MAGNITUDE COMPONENT
         mag_shape = mag.shape
-        mag = mag.reshape((-1, self.in_channels, mag_shape[-2], mag_shape[-1]))
-        log_output = F.conv2d(mag, \
-                             kernel, None, self.stride, self.padding, self.dilation, \
-                             self.groups)
+        mag = mag.reshape((-1, self.in_channels, mag_shape[-2], mag_shape[-1])) #TODO Utkarsh: Why this reshape? Shouldn't input shape already be [batch x channels x H x W]?
+        log_output = F.conv2d(mag, weight=kernel, \
+                             stride=self.stride, padding=self.padding, \
+                             dilation=self.dilation, groups = self.groups)
         log_output = log_output.reshape(mag.shape[0], self.num_filters*self.num_blocks, log_output.shape[-2], log_output.shape[-1])
         
         
         # DO COSINE COMPONENT
         cos_phase_shape = cos_phase.shape
         cos_phase = cos_phase.reshape((-1, self.in_channels, cos_phase_shape[-2], cos_phase_shape[-1]))
-        cos_output = F.conv2d(cos_phase, \
-                             kernel, None, self.stride, self.padding, self.dilation, \
-                             self.groups)
+        cos_output = F.conv2d(cos_phase, weight=kernel, \
+                             stride=self.stride, padding=self.padding, \
+                             dilation=self.dilation, groups=self.groups)
         cos_output = cos_output.reshape(cos_phase.shape[0], self.num_filters*self.num_blocks, cos_output.shape[-2], cos_output.shape[-1])
 #         cos_list = [F.conv2d(cos_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
 #                              cos_kernel, None, self.stride, self.padding, self.dilation, \
@@ -240,9 +241,9 @@ class ComplexConv(nn.Module):
         # [Batch, total_channels, H, W] ----> [Batch*L, kernel_channels, H, W]
         sin_phase_shape = sin_phase.shape
         sin_phase = sin_phase.reshape((-1, self.in_channels, sin_phase_shape[-2], sin_phase_shape[-1]))
-        sin_output = F.conv2d(sin_phase, \
-                             kernel, None, self.stride, self.padding, self.dilation, \
-                             self.groups)
+        sin_output = F.conv2d(sin_phase, weight=kernel, \
+                             stride=self.stride, padding=self.padding, \
+                             dilation=self.dilation, groups=self.groups)
         sin_output = sin_output.reshape(sin_phase.shape[0], self.num_filters*self.num_blocks, sin_output.shape[-2], sin_output.shape[-1])
         
 #         sin_list = [F.conv2d(sin_phase[:, i*self.in_channels:(i+1)*self.in_channels, ...], \
@@ -262,10 +263,26 @@ class ComplexConv(nn.Module):
         
         # Concate all final outputs together
         final_output = torch.cat([log_output.unsqueeze(1), cos_sin_output], dim=1)
-        if m(final_output):
+        if m(final_output): #TODO Utkarsh: Better function names for error detection
             st()
         return final_output
     
+
+    # def forward(self, x):
+    #     # How I (Utkarsh) might write this function
+    #     N, CC, C, H, W = x.shape # Batch, 3, channels, H, W
+    #     x = x.reshape(-1, self.in_channels, H, W)
+
+    #     kernel_sqrd = torch.square(self.kernel)
+    #     kernel = kernel_sqrd / torch.sum(kernel_sqrd, dim=(1,2,3), keepdim=True)
+        
+    #     conv_out = F.conv2d(x, weight=kernel, stride=self.stride, 
+    #                         padding=self.padding, dilation=self.dilation, groups=self.groups)
+    #     conv_out = conv_out.reshape(N, 3, self.num_filters*self.num_blocks , H, W)
+        
+    #     phase_norm = torch.norm(conv_out[:,1:],dim=1,keepdim=True)
+        
+    #     return torch.cat([[conv_out[:,:1], conv_out[:,1:]/phase_norm]], dim=1)
 
     
 class DistanceTransform(nn.Module):
@@ -328,8 +345,10 @@ class DistanceTransform(nn.Module):
         start_x = int((input_xdim-output_xdim)/2)
         start_y = int((input_ydim-output_ydim)/2)
         
-        cropped_input = x[:, :, :, start_x:start_x+output_xdim, start_y:start_y+output_ydim]
+        cropped_input = x[:, :, :, start_x:start_x+output_xdim, start_y:start_y+output_ydim] #TODO Utkarsh: Think this through
         
+        #TODO Utkarsh add checks for norms of the different phases. acos only gives nans if the norms are larger than 1.
+
         # Compute distance according to sqrt(log^2[(|z2|+b)/(|z1+b|)] + acos^2(x^T * y))
         directional_distance = torch.sum(cos_sin_output * cropped_input[:, 1:, ...], dim=1) # [Batch, out_channe;, height, width]
         directional_distance = torch.acos(torch.clamp(directional_distance, -1+1e-5, 1-1e-5)) ### Potential NaN problem
@@ -339,7 +358,7 @@ class DistanceTransform(nn.Module):
         return torch.sqrt(magnitude_distance**2 + directional_distance**2)
     
     
-class DistanceTransformUpsample(nn.Module):
+class DistanceTransformUpsample(nn.Module): #TODO Utkarsh look at this
     def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
         ## Magnitude do log / exp; Phase do weighted 
         super(DistanceTransformUpsample, self).__init__()
@@ -401,7 +420,7 @@ class DistanceTransformUpsample(nn.Module):
         
         cropped_input = x
         log_output = m(log_output)
-        cos_sin_output = torch.cat((m(cos_sin_output[:, 0, ...]).unsqueeze(1), m(cos_sin_output[:, 1, ...]).unsqueeze(1)), dim=1)
+        cos_sin_output = torch.cat((m(cos_sin_output[:, 0, ...]).unsqueeze(1), m(cos_sin_output[:, 1, ...]).unsqueeze(1)), dim=1) #TODO Phase upsample should be followed by normalization
         
         # Compute distance according to sqrt(log^2[(|z2+b|)/(|z1+b|)] + acos^2(x^T * y))
         directional_distance = torch.sum(cos_sin_output * cropped_input[:, 1:, ...], dim=1) # [Batch, out_channe;, height, width]
@@ -476,7 +495,7 @@ class DifferenceLayer(nn.Module):
         # Need to add noise or else normalization may have zero entries which cause NaN
         direction_noise = 1e-5
         directional_difference = cropped_input[:, 1:, ...] - cos_sin_output
-        directional_difference = (directional_difference + direction_noise) / torch.sqrt(torch.sum(directional_difference ** 2 + direction_noise, dim=1, keepdim=True))
+        directional_difference = (directional_difference + direction_noise) / torch.sqrt(torch.sum(directional_difference ** 2 + direction_noise, dim=1, keepdim=True)) #TODO Utkarsh fix this
         
         if m(directional_difference):
             st()
@@ -484,7 +503,7 @@ class DifferenceLayer(nn.Module):
         
         return torch.cat((magnitude_difference.unsqueeze(1), directional_difference), dim=1)        
         
-class DifferenceLayerUpsample(nn.Module):
+class DifferenceLayerUpsample(nn.Module): #TODO Utkarsh look at this
     def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
         ## Magnitude do log / exp; Phase do weighted 
         super(DifferenceLayerUpsample, self).__init__()
@@ -590,7 +609,7 @@ class EuclideanConv(nn.Module):
         stdv = 1. / math.sqrt(n)
         
         self.mag_kernel.data.uniform_(-stdv, stdv)
-        self.phase_kernel.data.uniform_(-stdv, stdv)
+        self.phase_kernel.data.uniform_(-stdv, stdv) #TODO Utkarsh remove phase kernel
     
     def forward(self, x):
         # Input is of shape [B, 2, c, h, w]
