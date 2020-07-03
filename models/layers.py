@@ -187,7 +187,7 @@ class ComplexConv(nn.Module):
         self.num_filters = num_filters
         self.out_channels = num_filters * num_tied_block
         # Initialize kernels
-        self.kernel = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
+        self.weight = torch.nn.Parameter(torch.rand((self.num_filters, self.in_channels, self.kern_size[0], self.kern_size[1])), requires_grad=True)
         
         # Consistent with torch's initialization
         n = self.in_channels #TODO Utkarsh: Seems like we are initializing weights manually. Use nn.init functions?
@@ -195,7 +195,7 @@ class ComplexConv(nn.Module):
             n *= k
         stdv = 1. / math.sqrt(n)
         
-        self.kernel.data.uniform_(-stdv, stdv)
+        self.weight.data.uniform_(-stdv, stdv)
         
     def __repr__(self):
         return 'ComplexConv('+str(self.in_channels)+', '+str(self.out_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
@@ -212,7 +212,7 @@ class ComplexConv(nn.Module):
         sin_phase = x[:, 2, ...]
         
         # Normalize kernel
-        kernel_sqrd = self.kernel ** 2
+        kernel_sqrd = self.weight ** 2
         kernel = kernel_sqrd / torch.sum(torch.sum(torch.sum(kernel_sqrd, dim=2, keepdim=True), dim=3, keepdim=True), dim=1, keepdim=True) #TODO Utkarsh: do dim=(1,2,3)?
         
         # DO MAGNITUDE COMPONENT
@@ -312,7 +312,7 @@ class DistanceTransform(nn.Module):
         
         self.in_channels = in_channels // num_tied_block
         
-        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=self.in_channels, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
+        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=1, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
         
     def __repr__(self):
         return 'DistanceTransform('+str(self.in_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
@@ -322,7 +322,7 @@ class DistanceTransform(nn.Module):
         # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
         
         wFMs = self.wFM(x)
-        
+        wFMs = wFMs.repeat(1, 1, self.in_channels, 1, 1)
         # Input is of shape [Batch, 3, channel, height, width]
         # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
         
@@ -459,7 +459,7 @@ class DifferenceLayer(nn.Module):
         self.in_channels = in_channels // num_tied_block
         
          
-        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=self.in_channels, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
+        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=1, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
         
     def __repr__(self):
         return 'DistanceLayer('+str(self.in_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
@@ -467,6 +467,7 @@ class DifferenceLayer(nn.Module):
     def forward(self, x):
         
         wFMs = self.wFM(x)
+        wFMs = wFMs.repeat(1, 1, self.in_channels, 1, 1)
         
         # Input is of shape [Batch, 3, channel, height, width]
         # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
