@@ -357,7 +357,96 @@ class DistanceTransform(nn.Module):
         
         return torch.sqrt(magnitude_distance**2 + directional_distance**2)
     
+
+class SignedDistanceTransform(nn.Module):
+    def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
+        ## Magnitude do log / exp; Phase do weighted 
+        super(SignedDistanceTransform, self).__init__()
+        
+        self.in_channels = in_channels
+        self.kern_size = kern_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        
+        if type(kern_size) == int:
+            self.kern_size = (kern_size, kern_size)
+            
+        # Number of tied-block convolution kernels, 1 equals regular convolution.
+        # Each tied-block convolution kernel goes through **in_channels // num_tied_block** channels
+        self.num_blocks = num_tied_block
+        
+        if in_channels % num_tied_block != 0:
+            assert("Number of tied block convolution needs to be multiple of in_channels: "+str(in_channels))
+            
+        
+        self.b = b # For hyperparameter in distance calculation    
+        
+        self.in_channels = in_channels // num_tied_block
+        
+        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=self.in_channels, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
+        
+    def __repr__(self):
+        return 'DistanceTransform('+str(self.in_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
     
+    def forward(self, x):
+        # Input is of shape [Batch, 3, channel, height, width]
+        # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
+        
+        wFMs = self.wFM(x)
+        
+        # Input is of shape [Batch, 3, channel, height, width]
+        # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
+        
+        # Separate each component and do convolution along each component
+        # The input of each component is [Batch, in_channel, height, width]
+        # The output of each component is [Batch, in_channel, height, width]
+        # The final output of this layer would be [Batch, in_channel, height, width]
+        log_output = wFMs[:, 0, ...]
+        cos_output = wFMs[:, 1, ...]
+        sin_output = wFMs[:, 2, ...]
+        cos_sin_output = wFMs[:, 1:, ...]
+        
+        
+        # For center-cropping original input
+        output_xdim = cos_output.shape[2]
+        output_ydim = cos_output.shape[3]
+        input_xdim = x.shape[3]
+        input_ydim = x.shape[4]
+        
+        start_x = int((input_xdim-output_xdim)/2)
+        start_y = int((input_ydim-output_ydim)/2)
+        
+        cropped_input = x[:, :, :, start_x:start_x+output_xdim, start_y:start_y+output_ydim] #TODO Utkarsh: Think this through
+        
+        #TODO Utkarsh add checks for norms of the different phases. acos only gives nans if the norms are larger than 1.
+
+        # Compute distance according to sqrt(log^2[(|z2|+b)/(|z1+b|)] + acos^2(x^T * y))
+        directional_distance = torch.sum(cos_sin_output * cropped_input[:, 1:, ...], dim=1) # [Batch, out_channe;, height, width]
+        directional_distance = torch.acos(torch.clamp(directional_distance, -1+1e-5, 1-1e-5)) ### Potential NaN problem
+
+        assert cos_sin_output.shape[1] == 2
+        assert (cos_sin_output.norm(dim=1) - 1).abs().max() < 1e-5
+        assert cropped_input[:,1:].shape[1] == 2
+        assert (cropped_input[:,1:].norm(dim=1) - 1).abs().max() < 1e-5
+
+        cos_sin_output_aug = torch.cat([cos_sin_output, cos_sin_output[:,1:]*0.0], dim=1)
+        cropped_input_aug = torch.cat([cropped_input[:,1:], cropped_input[:,:1]*0.0], dim=1)
+
+        cross = torch.sign(torch.cross(cos_sin_output_aug, cropped_input_aug, dim=1)[-1])
+        
+        assert cross.shape[1] == 1
+
+
+        magnitude_distance = cropped_input[:, 0, ...] - log_output 
+        
+        l2_dist = torch.sqrt(magnitude_distance**2 + directional_distance**2)
+
+        assert l2_dist.shape == cross.shape
+        return l2_dist*cross
+
+
 class DistanceTransformUpsample(nn.Module): #TODO Utkarsh look at this
     def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
         ## Magnitude do log / exp; Phase do weighted 
@@ -493,9 +582,10 @@ class DifferenceLayer(nn.Module):
         
         # Compute distance according to sqrt(log^2[(|z2|+b)/(|z1|+b)] + acos^2(x^T * y))
         # Need to add noise or else normalization may have zero entries which cause NaN
-        direction_noise = 1e-5
         directional_difference = cropped_input[:, 1:, ...] - cos_sin_output
-        directional_difference = (directional_difference + direction_noise) / torch.sqrt(torch.sum(directional_difference ** 2 + direction_noise, dim=1, keepdim=True)) #TODO Utkarsh fix this
+        # directional_difference = (directional_difference + direction_noise) / torch.sqrt(torch.sum(directional_difference ** 2 + direction_noise, dim=1, keepdim=True)) #TODO Utkarsh fix this
+        
+        directional_difference = directional_difference/(torch.norm(directional_difference, dim=1)+eps)
         
         if m(directional_difference):
             st()
