@@ -37,13 +37,39 @@ def plot_grad_flow(named_parameters):
     plt.savefig('books_read.png')
 #     st()
     
+# def plot_filter(model):
+#     mat1 = model.complex_conv1.kernel.cpu().detach().numpy()
+#     mat2 = model.complex_conv2.kernel.cpu().detach().numpy()
+#     fig = plt.figure()
+#     fig.subplots_adjust(hspace=0.4, wspace=0.4)
+#     for i in range(1, 21):
+#         ax = fig.add_subplot(5, 4, i)
+#         ax.imshow(mat1[i-1, 0, ...])
+#     plt.savefig('mat1.png')
+#     plt.close()
+#     fig = plt.figure()
+#     fig.subplots_adjust(hspace=0.4, wspace=0.4)
+#     for i in range(1, 21):
+#         ax = fig.add_subplot(5, 4, i)
+#         ax.imshow(mat2[i-1, 0, ...])
+#     plt.savefig('mat2.png')
+    
 def plot_filter(model):
-    mat1 = model.complex_conv1.kernel.cpu().detach().numpy()
-    mat2 = model.complex_conv2.kernel.cpu().detach().numpy()
-    plt.matshow(mat1)
+    mat1 = model.complex_conv1.weight.cpu().detach().numpy()
+#     mat2 = model.distance1.wFM.weight.cpu().detach().numpy()
+    mat2 = model.complex_conv2.weight.cpu().detach().numpy()
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, 21):
+        ax = fig.add_subplot(5, 4, i)
+        ax.imshow(mat1[i-1, 0, ...])
     plt.savefig('mat1.png')
     plt.close()
-    plt.matshow(mat2)
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, 21):
+        ax = fig.add_subplot(5, 4, i)
+        ax.imshow(mat2[i-1, 0, ...])
     plt.savefig('mat2.png')
 
 def test(model, device, test_loader, logger, epoch):
@@ -120,12 +146,14 @@ def m(x):
 class Experimental_model(nn.Module):
     def __init__(self):
         super(Experimental_model, self).__init__()
-        self.complex_conv1 = layers.ComplexConv(1, 20, (5, 5), (2, 2), num_tied_block=1)
-        self.distance1 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
-        self.distance2 = layers.DifferenceLayer(30, (5, 5), num_tied_block=1)
+        self.complex_conv1 = layers.ComplexConv(1, 20, (5, 5), num_tied_block=1)
+        self.distance1 = layers.DifferenceLayer(20, (3, 3), num_tied_block=1)
+        self.distance2 = layers.DifferenceLayer(30, (3, 3), num_tied_block=1)
+        self.distance3 = layers.DifferenceLayer(30, (4, 4), num_tied_block=1)
 #         self.distance3 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
         self.tangentReLU = layers.tangentRELU()
         self.complex_conv2 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
+        self.complex_conv3 = layers.ComplexConv(30, 30, (5, 5), (2, 2), num_tied_block=1)
 #         self.complex_conv3 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
         self.linear_1 = layers.DistanceTransform(30, (2, 2), num_tied_block=1)
         self.l = nn.Linear(30, 2)
@@ -141,16 +169,18 @@ class Experimental_model(nn.Module):
         x = self.complex_conv2(x)
         x = self.distance2(x)
         x = self.tangentReLU(x)
-#         x = self.complex_conv3(x)
-#         x = self.distance3(x)
-#         x = self.tangentReLU(x)
+        x = self.complex_conv3(x)
+        x = self.distance3(x)
+        x = self.tangentReLU(x)
         
 #         print(x.shape)
         x = self.linear_1(x)
         x = self.relu(x)
-        x = self.bn1(x)
+#         x = self.bn1(x)
         
         b = x.shape[0]
+
+#         print(x.shape)
         x = x.view(b, -1)
         
         x = self.l(x)
@@ -173,13 +203,13 @@ class Experimental_model(nn.Module):
 #     def forward(self, x):
 #         x = self.complex_conv1(x)
 #         x = self.relu(x)
-#         x = self.bn1(x)
+# #         x = self.bn1(x)
 #         x = self.complex_conv2(x)
 #         x = self.relu(x)
-#         x = self.bn2(x)
+# #         x = self.bn2(x)
 #         x = self.complex_conv3(x)
 #         x = self.relu(x)
-#         x = self.bn3(x)
+# #         x = self.bn3(x)
 # #         print(x.shape)
 #         x = self.linear_1(x)
 #         b = x.shape[0]
