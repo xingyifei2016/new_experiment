@@ -37,7 +37,14 @@ def plot_grad_flow(named_parameters):
     plt.savefig('books_read.png')
 #     st()
     
-    
+def plot_filter(model):
+    mat1 = model.complex_conv1.kernel.cpu().detach().numpy()
+    mat2 = model.complex_conv2.kernel.cpu().detach().numpy()
+    plt.matshow(mat1)
+    plt.savefig('mat1.png')
+    plt.close()
+    plt.matshow(mat2)
+    plt.savefig('mat2.png')
 
 def test(model, device, test_loader, logger, epoch):
     test_loss = 0
@@ -58,6 +65,8 @@ def test(model, device, test_loader, logger, epoch):
 def train(model, device, train_loader, optimizer, epoch, logger):
     train_acc = 0
     train_loss = 0
+    if epoch > 20:
+        plot_filter(model)
     for it,(local_batch, local_labels) in enumerate(train_loader):
         batch = torch.tensor(local_batch, requires_grad=True).cuda()
         labels = local_labels.cuda()
@@ -108,53 +117,76 @@ def m(x):
     return True in torch.isnan(x).cpu().detach().numpy()
 
 
+class Experimental_model(nn.Module):
+    def __init__(self):
+        super(Experimental_model, self).__init__()
+        self.complex_conv1 = layers.ComplexConv(1, 20, (5, 5), (2, 2), num_tied_block=1)
+        self.distance1 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
+        self.distance2 = layers.DifferenceLayer(30, (5, 5), num_tied_block=1)
+#         self.distance3 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
+        self.tangentReLU = layers.tangentRELU()
+        self.complex_conv2 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
+#         self.complex_conv3 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
+        self.linear_1 = layers.DistanceTransform(30, (2, 2), num_tied_block=1)
+        self.l = nn.Linear(30, 2)
+        self.relu = nn.ReLU()
+        self.bn1 = nn.BatchNorm2d(30)
+        
+    def forward(self, x):
+        x = x.unsqueeze(2)
+#         print(x.shape)
+        x = self.complex_conv1(x)
+        x = self.distance1(x)
+        x = self.tangentReLU(x)
+        x = self.complex_conv2(x)
+        x = self.distance2(x)
+        x = self.tangentReLU(x)
+#         x = self.complex_conv3(x)
+#         x = self.distance3(x)
+#         x = self.tangentReLU(x)
+        
+#         print(x.shape)
+        x = self.linear_1(x)
+        x = self.relu(x)
+        x = self.bn1(x)
+        
+        b = x.shape[0]
+        x = x.view(b, -1)
+        
+        x = self.l(x)
+        return x
+    
 # class Experimental_model(nn.Module):
 #     def __init__(self):
 #         super(Experimental_model, self).__init__()
-#         self.complex_conv1 = layers.ComplexConv(1, 20, (5, 5), (2, 2), num_tied_block=1)
-#         self.distance1 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
-#         self.tangentReLU = layers.tangentRELU()
-#         self.complex_conv2 = layers.ComplexConv(20, 20, (5, 5), (2, 2), num_tied_block=1)
-#         self.linear_1 = layers.DistanceTransform(20, (3, 3), num_tied_block=1)
-#         self.l = nn.Linear(20, 2)
-        
+#         self.complex_conv1 = nn.Conv2d(3, 20, (5, 5), (2, 2))
+#         self.complex_conv2 = nn.Conv2d(20, 20, (5, 5), (2, 2))
+#         self.complex_conv3 = nn.Conv2d(20, 30, (5, 5), (2, 2))
+#         self.bn1 = nn.BatchNorm2d(20)
+#         self.bn2 = nn.BatchNorm2d(20)
+#         self.bn3 = nn.BatchNorm2d(30)
+#         self.linear_1 = nn.Conv2d(30, 30, (2, 2), (1, 1))
+#         self.l = nn.Linear(30, 2)
+#         self.relu = nn.ReLU()
        
         
 #     def forward(self, x):
-#         x = x.unsqueeze(2)
 #         x = self.complex_conv1(x)
+#         x = self.relu(x)
+#         x = self.bn1(x)
 #         x = self.complex_conv2(x)
-        
+#         x = self.relu(x)
+#         x = self.bn2(x)
+#         x = self.complex_conv3(x)
+#         x = self.relu(x)
+#         x = self.bn3(x)
+# #         print(x.shape)
 #         x = self.linear_1(x)
 #         b = x.shape[0]
 #         x = x.view(b, -1)
         
 #         x = self.l(x)
 #         return x
-    
-class Experimental_model(nn.Module):
-    def __init__(self):
-        super(Experimental_model, self).__init__()
-        self.complex_conv1 = nn.Conv2d(3, 20, (5, 5), (2, 2))
-        
-        self.complex_conv2 = nn.Conv2d(20, 20, (5, 5), (2, 2))
-        self.linear_1 = nn.Conv2d(20, 20, (3, 3), (1, 1))
-        self.l = nn.Linear(20, 2)
-        
-       
-        
-    def forward(self, x):
-        x = self.complex_conv1(x)
-#         x = self.distance1(x)
-#         x = self.tangentReLU(x)
-        x = self.complex_conv2(x)
-        
-        x = self.linear_1(x)
-        b = x.shape[0]
-        x = x.view(b, -1)
-        
-        x = self.l(x)
-        return x
     
 def main():
     #argparse settings
