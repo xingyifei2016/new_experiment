@@ -19,6 +19,8 @@ from dataloaders import easyloader as t
 import matplotlib.pyplot as plt
 from models import resnet18 as re
 from models import layers
+from skimage import color
+
 def plot_grad_flow(named_parameters):
     ave_grads = []
     layers = []
@@ -34,6 +36,7 @@ def plot_grad_flow(named_parameters):
     plt.ylabel("average gradient")
     plt.title("Gradient flow")
     plt.grid(True)
+    plt.axis('off')
     plt.savefig('books_read.png')
 #     st()
     
@@ -54,23 +57,140 @@ def plot_grad_flow(named_parameters):
 #         ax.imshow(mat2[i-1, 0, ...])
 #     plt.savefig('mat2.png')
     
-def plot_filter(model):
-    mat1 = model.complex_conv1.weight.cpu().detach().numpy()
-#     mat2 = model.distance1.wFM.weight.cpu().detach().numpy()
-    mat2 = model.complex_conv2.weight.cpu().detach().numpy()
+def plot_complex_filter_results(inputs1, inputs2, inputs3):
+    # Inputs of shape X, X, 3
+
+    mat1 = inputs1.cpu().detach().numpy()
+    
+    
     fig = plt.figure()
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
-    for i in range(1, 21):
+    for i in range(1, len(inputs1[0])):
         ax = fig.add_subplot(5, 4, i)
-        ax.imshow(mat1[i-1, 0, ...])
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img = mat1[:, i-1, ...]
+        ee=ax.imshow(np.transpose(img, (1, 2, 0)) )
+    
+    
+    
+    plt.savefig('complexOutputs1.png')
+    
+    plt.close()
+    
+    mat1 = inputs2.cpu().detach().numpy()
+    
+    
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, len(inputs2[0])):
+        ax = fig.add_subplot(5, 4, i)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img = mat1[:, i-1, ...]
+        ee=ax.imshow(np.transpose(img, (1, 2, 0)) )
+    
+    
+    
+    plt.savefig('complexOutputs2.png')
+    
+    plt.close()
+    
+    mat1 = inputs3.cpu().detach().numpy()
+    
+    plt.imshow(np.transpose(mat1[:, 0, ...], (1, 2, 0)))
+    
+    
+    
+    plt.savefig('complexOutputs3.png')
+    plt.close()
+    
+def plot_real_filter_results(inputs1, inputs2, inputs3):
+    # Inputs of shape X, X, 3
+
+    mat1 = inputs1.cpu().detach().numpy()
+    
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    
+    for i in range(1, len(inputs1)):
+        ax = fig.add_subplot(5, 4, i)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img = mat1[i-1, ...]
+        ee=ax.imshow(img, cmap='gray')
+    
+    
+    
+    plt.savefig('realOutputs1.png')
+    
+    plt.close()
+    
+    mat1 = inputs2.cpu().detach().numpy()
+    
+    
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, len(inputs2[0])):
+        ax = fig.add_subplot(5, 4, i)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img = mat1[i-1, ...]
+        ee=ax.imshow(img, cmap='gray')
+    
+    
+    
+    
+    plt.savefig('realOutputs2.png')
+    
+    plt.close()
+    
+    mat1 = inputs3.cpu().detach().numpy()
+    
+    
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, 4):
+        ax = fig.add_subplot(5, 4, i)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img = mat1[i-1, ...]
+        ee=ax.imshow(img, cmap='gray')
+    
+    
+    plt.savefig('realOutputs3.png')
+    plt.close()
+    
+    
+def plot_filter(model):
+    if not model.complex:
+        mat1 = model.complex_conv1.weight.cpu().detach().numpy()
+        mat2 = model.complex_conv2.weight.cpu().detach().numpy()
+    else:
+        mat1 = model.complex_conv1.wFM.weight.cpu().detach().numpy()
+        mat2 = model.complex_conv2.wFM.weight.cpu().detach().numpy()
+    
+    
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, 9):
+        ax = fig.add_subplot(5, 4, i)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        ax.imshow(mat1[i-1, 0, ...], cmap='gray')
+    
     plt.savefig('mat1.png')
     plt.close()
     fig = plt.figure()
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
-    for i in range(1, 21):
+    for i in range(1, 17):
         ax = fig.add_subplot(5, 4, i)
-        ax.imshow(mat2[i-1, 0, ...])
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        ax.imshow(mat2[i-1, 0, ...], cmap='gray')
+    
     plt.savefig('mat2.png')
+    plt.close()
 
 def test(model, device, test_loader, logger, epoch):
     test_loss = 0
@@ -81,7 +201,7 @@ def test(model, device, test_loader, logger, epoch):
         for i, (data, target) in enumerate(test_loader):
             targets = target.cpu().numpy()
             data, target = data.to(device), target.to(device)
-            output = model(data)
+            output = model(data)[0]
             pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
     print("Test Accuracy is: "+str(100. * correct / len(test_loader.dataset)))
@@ -91,13 +211,13 @@ def test(model, device, test_loader, logger, epoch):
 def train(model, device, train_loader, optimizer, epoch, logger):
     train_acc = 0
     train_loss = 0
-    if epoch > 20:
+    if epoch == 99:
         plot_filter(model)
     for it,(local_batch, local_labels) in enumerate(train_loader):
         batch = torch.tensor(local_batch, requires_grad=True).cuda()
         labels = local_labels.cuda()
         optimizer.zero_grad()
-        out = model(batch)
+        out = model(batch)[0]
         _, predicted = torch.max(out, 1)
         total = labels.shape[0]
         train_acc += (predicted == labels).sum().item()
@@ -105,7 +225,12 @@ def train(model, device, train_loader, optimizer, epoch, logger):
         loss = criterion(out, labels)
         train_loss += loss 
         loss.backward()
-#         plot_grad_flow(model.named_parameters())
+        if it == 0 and epoch == 499 and model.complex:
+            
+            plot_complex_filter_results(model(batch)[1][0], model(batch)[2][0], model(batch)[3][0])
+            
+        elif it == 0 and epoch == 499 and not model.complex:
+            plot_real_filter_results(model(batch)[1][0], model(batch)[2][0], model(batch)[3][0])
         
         optimizer.step()
     print("#####EPOCH "+str(epoch)+"#####")
@@ -143,80 +268,75 @@ def m(x):
     return True in torch.isnan(x).cpu().detach().numpy()
 
 
-class Experimental_model(nn.Module):
+class Experimental_model0(nn.Module):
     def __init__(self):
-        super(Experimental_model, self).__init__()
-        self.complex_conv1 = layers.ComplexConv(1, 20, (5, 5), num_tied_block=1)
-        self.distance1 = layers.DifferenceLayer(20, (3, 3), num_tied_block=1)
-        self.distance2 = layers.DifferenceLayer(30, (3, 3), num_tied_block=1)
-        self.distance3 = layers.DifferenceLayer(30, (4, 4), num_tied_block=1)
-#         self.distance3 = layers.DifferenceLayer(20, (5, 5), num_tied_block=1)
+        super(Experimental_model0, self).__init__()
+        self.complex_conv1 = layers.DifferenceLayerVer2(1, (3, 3), (2, 2), num_tied_block=1, multiplier=8)
+        self.complex_conv2 = layers.DifferenceLayerVer2(8, (3, 3), (2, 2), num_tied_block=1, multiplier=2)
         self.tangentReLU = layers.tangentRELU()
-        self.complex_conv2 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
-        self.complex_conv3 = layers.ComplexConv(30, 30, (5, 5), (2, 2), num_tied_block=1)
-#         self.complex_conv3 = layers.ComplexConv(20, 30, (5, 5), (2, 2), num_tied_block=1)
-        self.linear_1 = layers.DistanceTransform(30, (2, 2), num_tied_block=1)
-        self.l = nn.Linear(30, 2)
+        self.linear_1 = layers.DistanceTransform(16, (3, 3), num_tied_block=1)
         self.relu = nn.ReLU()
-        self.bn1 = nn.BatchNorm2d(30)
+        self.l1 = nn.Linear(64, 16)
+        self.l2 = nn.Linear(16, 8)
+        self.l3 = nn.Linear(8, 2)
+        self.complex = True
         
     def forward(self, x):
-        x = x.unsqueeze(2)
-#         print(x.shape)
-        x = self.complex_conv1(x)
-        x = self.distance1(x)
-        x = self.tangentReLU(x)
-        x = self.complex_conv2(x)
-        x = self.distance2(x)
-        x = self.tangentReLU(x)
-        x = self.complex_conv3(x)
-        x = self.distance3(x)
-        x = self.tangentReLU(x)
-        
-#         print(x.shape)
+        x3 = x.unsqueeze(2)
+        x1 = self.complex_conv1(x3)
+        x = self.tangentReLU(x1)
+        x2 = self.complex_conv2(x)
+        x = self.tangentReLU(x2)
         x = self.linear_1(x)
         x = self.relu(x)
-#         x = self.bn1(x)
-        
         b = x.shape[0]
 
 #         print(x.shape)
         x = x.view(b, -1)
         
-        x = self.l(x)
-        return x
+        x = self.l1(x)
+        x = self.relu(x)
+        x = self.l2(x)
+        x = self.relu(x)
+        x = self.l3(x)
+        x = self.relu(x)
+        return x, x1, x2, x3
     
-# class Experimental_model(nn.Module):
-#     def __init__(self):
-#         super(Experimental_model, self).__init__()
-#         self.complex_conv1 = nn.Conv2d(3, 20, (5, 5), (2, 2))
-#         self.complex_conv2 = nn.Conv2d(20, 20, (5, 5), (2, 2))
-#         self.complex_conv3 = nn.Conv2d(20, 30, (5, 5), (2, 2))
-#         self.bn1 = nn.BatchNorm2d(20)
-#         self.bn2 = nn.BatchNorm2d(20)
-#         self.bn3 = nn.BatchNorm2d(30)
-#         self.linear_1 = nn.Conv2d(30, 30, (2, 2), (1, 1))
-#         self.l = nn.Linear(30, 2)
-#         self.relu = nn.ReLU()
+class Experimental_model1(nn.Module):
+    def __init__(self):
+        super(Experimental_model1, self).__init__()
+        self.complex_conv1 = nn.Conv2d(3, 8, (3, 3), (2, 2))
+        self.complex_conv2 = nn.Conv2d(8, 16, (3, 3), (2, 2))
+        self.complex_conv3 = nn.Conv2d(16, 16, (3, 3), (1, 1))
+        self.complex = False
+        self.l1 = nn.Linear(64, 16)
+        self.l2 = nn.Linear(16, 8)
+        self.l3 = nn.Linear(8, 2)
+        self.relu = nn.ReLU()
        
         
-#     def forward(self, x):
-#         x = self.complex_conv1(x)
-#         x = self.relu(x)
-# #         x = self.bn1(x)
-#         x = self.complex_conv2(x)
-#         x = self.relu(x)
-# #         x = self.bn2(x)
-#         x = self.complex_conv3(x)
-#         x = self.relu(x)
-# #         x = self.bn3(x)
-# #         print(x.shape)
-#         x = self.linear_1(x)
-#         b = x.shape[0]
-#         x = x.view(b, -1)
+    def forward(self, x):
+        x3 = x
+        x1 = self.complex_conv1(x)
+        x = self.relu(x1)
+#         x = self.bn1(x)
+        x2 = self.complex_conv2(x)
+        x = self.relu(x2)
+#         x = self.bn2(x)
+        x = self.complex_conv3(x)
+        x = self.relu(x)
+#         x = self.bn3(x)
         
-#         x = self.l(x)
-#         return x
+        b = x.shape[0]
+        x = x.view(b, -1)
+        
+        x = self.l1(x)
+        x = self.relu(x)
+        x = self.l2(x)
+        x = self.relu(x)
+        x = self.l3(x)
+        x = self.relu(x)
+        return x, x1, x2, x3
     
 def main():
     #argparse settings
@@ -225,7 +345,7 @@ def main():
                         help='input batch size for training (default: 400)')
     parser.add_argument('--test_batchsize', type=int, default=400, metavar='N',
                         help='input batch size for testing (default: 400)')
-    parser.add_argument('--epochs', type=int, default=100, metavar='N',
+    parser.add_argument('--epochs', type=int, default=500, metavar='N',
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=0.015, metavar='LR',
                         help='learning rate (default: 0.015)')
@@ -270,11 +390,11 @@ def main():
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 #     batches = [80, 50, 1000, 30, 600] 
     batches = [256]
-    lrs = [0.001, 0.05]
+    lrs = [0.001]
 #     models = {'difference+tangent': model_.Dis_Tan, 'tangent only': model_.NL, 'difference': model_.Dis, 'tangent+difference': model_.Tan_Dis, 'previous_architecture': model_.ManifoldNetRes}
-    models = {'newModels': Experimental_model}
-    num_repeat = 2
-    splits = [0.4, 0.3, 0.2]
+    models = {'real': Experimental_model1, 'complex': Experimental_model0}
+    num_repeat = 1
+    splits = [0.4]
     
    
     
@@ -319,41 +439,41 @@ def main():
                     logger.info("####Highest Testing Accuracy: "+str(even_higher))
                     
                     
-    model = re.ResNet().cuda()
-    logger.info(model)
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    logger.info("#Model Parameters: "+str(params))
-    for split in splits:
-        for i in batches:
-            train_loader, val_loader, test_loader = t.sqrt_prep(args.data_dir, i, args.test_batchsize, split, logger)
+#     model = re.ResNet().cuda()
+#     logger.info(model)
+#     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+#     params = sum([np.prod(p.size()) for p in model_parameters])
+#     logger.info("#Model Parameters: "+str(params))
+#     for split in splits:
+#         for i in batches:
+#             train_loader, val_loader, test_loader = t.sqrt_prep(args.data_dir, i, args.test_batchsize, split, logger)
 
-            for j in lrs:
-                even_higher = 0
-                for ee in range(num_repeat):
-                    optimizer = optim.Adam(model.parameters(), lr=j, eps=1e-8, amsgrad=True)
-                    logger.info("Learning Rate: "+str(j))
-                    logger.info("Batch Size: "+str(i))
-                    logger.info("ResNet18")
-                    logger.info("Repeating trial "+str(ee))
-                    logger.info("Split "+str(split))
-                    highest = 0
+#             for j in lrs:
+#                 even_higher = 0
+#                 for ee in range(num_repeat):
+#                     optimizer = optim.Adam(model.parameters(), lr=j, eps=1e-8, amsgrad=True)
+#                     logger.info("Learning Rate: "+str(j))
+#                     logger.info("Batch Size: "+str(i))
+#                     logger.info("ResNet18")
+#                     logger.info("Repeating trial "+str(ee))
+#                     logger.info("Split "+str(split))
+#                     highest = 0
 
-                    for epoch in range(1, args.epochs + 1):
-                        train(model, device, train_loader, optimizer, epoch, logger)
-                        acc=test(model, device, val_loader, logger, epoch)
-                        highest, save_path, new_best = compare_and_save(model, acc, highest, save_path, logger, i, j, split)
+#                     for epoch in range(1, args.epochs + 1):
+#                         train(model, device, train_loader, optimizer, epoch, logger)
+#                         acc=test(model, device, val_loader, logger, epoch)
+#                         highest, save_path, new_best = compare_and_save(model, acc, highest, save_path, logger, i, j, split)
 
-                        if new_best:
-                            logger.info("####NEW TEST RESULT#####")
-                            acc=test(model, device, test_loader, logger, epoch)
-                            logger.info("####NEW TEST RESULT#####")
-                            even_higher = max(acc, even_higher)
-                    acc=test(model, device, test_loader, logger, epoch)
-                    even_higher = max(acc, even_higher)
-                    logger.info("########## NEW MODEL ###########")
-                    model = re.ResNet().cuda()
-                logger.info("####Highest Testing Accuracy: "+str(even_higher))
+#                         if new_best:
+#                             logger.info("####NEW TEST RESULT#####")
+#                             acc=test(model, device, test_loader, logger, epoch)
+#                             logger.info("####NEW TEST RESULT#####")
+#                             even_higher = max(acc, even_higher)
+#                     acc=test(model, device, test_loader, logger, epoch)
+#                     even_higher = max(acc, even_higher)
+#                     logger.info("########## NEW MODEL ###########")
+#                     model = re.ResNet().cuda()
+#                 logger.info("####Highest Testing Accuracy: "+str(even_higher))
 
 if __name__ == '__main__':
     main()
