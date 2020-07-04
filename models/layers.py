@@ -592,7 +592,81 @@ class DifferenceLayer(nn.Module):
             st()
         magnitude_difference = cropped_input[:, 0, ...] - log_output
         
-        return torch.cat((magnitude_difference.unsqueeze(1), directional_difference), dim=1)        
+        return torch.cat((magnitude_difference.unsqueeze(1), directional_difference), dim=1)
+    
+class DifferenceLayerVer2(nn.Module):
+    def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7, multiplier=1):
+        ## Magnitude do log / exp; Phase do weighted 
+        super(DifferenceLayerVer2, self).__init__()
+        
+        self.in_channels = in_channels
+        self.kern_size = kern_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        self.multiplier = multiplier
+        if type(kern_size) == int:
+            self.kern_size = (kern_size, kern_size)
+            
+        # Number of tied-block convolution kernels, 1 equals regular convolution.
+        # Each tied-block convolution kernel goes through **in_channels // num_tied_block** channels
+        self.num_blocks = num_tied_block
+        
+        if in_channels % num_tied_block != 0:
+            assert("Number of tied block convolution needs to be multiple of in_channels: "+str(in_channels))
+            
+        
+        self.b = b # For hyperparameter in distance calculation    
+        
+        self.in_channels = in_channels // num_tied_block
+        
+         
+        self.wFM = ComplexConv(in_channels=self.in_channels, num_filters=multiplier*self.in_channels, kern_size=self.kern_size, stride=self.stride, num_tied_block=self.num_blocks)
+        
+    def __repr__(self):
+        return 'DistanceLayer('+str(self.in_channels)+', kernel_size='+str(self.kern_size)+', stride='+str(self.stride)+', num_tied_blocks='+str(self.num_blocks)+')'    
+    
+    def forward(self, x):
+        
+        wFMs = self.wFM(x)
+        x = x.repeat(1, 1, self.multiplier, 1, 1)
+        
+        # Input is of shape [Batch, 3, channel, height, width]
+        # Cylindrical representation of data: [log(|z|), x/|z|, y/|z|]
+        
+        # Separate each component and do convolution along each component
+        # The input of each component is [Batch, in_channel, height, width]
+        # The output of each component is [Batch, in_channel, height, width]
+        # The final output of this layer would be [Batch, in_channel, height, width]
+        log_output = wFMs[:, 0, ...]
+        cos_output = wFMs[:, 1, ...]
+        sin_output = wFMs[:, 2, ...]
+        cos_sin_output = wFMs[:, 1:, ...]
+        
+        # For center-cropping original input
+        output_xdim = cos_output.shape[2]
+        output_ydim = cos_output.shape[3]
+        input_xdim = x.shape[3]
+        input_ydim = x.shape[4]
+        
+        start_x = int((input_xdim-output_xdim)/2)
+        start_y = int((input_ydim-output_ydim)/2)
+        
+        cropped_input = x[:, :, :, start_x:start_x+output_xdim, start_y:start_y+output_ydim]
+        
+        # Compute distance according to sqrt(log^2[(|z2|+b)/(|z1|+b)] + acos^2(x^T * y))
+        # Need to add noise or else normalization may have zero entries which cause NaN
+        directional_difference = cropped_input[:, 1:, ...] - cos_sin_output
+        # directional_difference = (directional_difference + direction_noise) / torch.sqrt(torch.sum(directional_difference ** 2 + direction_noise, dim=1, keepdim=True)) #TODO Utkarsh fix this
+        
+        directional_difference = directional_difference/(torch.norm(directional_difference, dim=1, keepdim=True)+eps)
+        
+        if m(directional_difference):
+            st()
+        magnitude_difference = cropped_input[:, 0, ...] - log_output
+        
+        return torch.cat((magnitude_difference.unsqueeze(1), directional_difference), dim=1)
         
 class DifferenceLayerUpsample(nn.Module): #TODO Utkarsh look at this
     def __init__(self, in_channels, kern_size, stride=(1,1), num_tied_block=1, padding=0, dilation=1, groups=1, b=1e-7):
