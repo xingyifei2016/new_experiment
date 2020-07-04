@@ -434,9 +434,7 @@ class SignedDistanceTransform(nn.Module):
         cos_sin_output_aug = torch.cat([cos_sin_output, cos_sin_output[:,1:]*0.0], dim=1)
         cropped_input_aug = torch.cat([cropped_input[:,1:], cropped_input[:,:1]*0.0], dim=1)
 
-        cross = torch.sign(torch.cross(cos_sin_output_aug, cropped_input_aug, dim=1)[-1])
-        
-        assert cross.shape[1] == 1
+        cross = torch.sign(torch.cross(cos_sin_output_aug, cropped_input_aug, dim=1)[:,-1])
 
 
         magnitude_distance = cropped_input[:, 0, ...] - log_output 
